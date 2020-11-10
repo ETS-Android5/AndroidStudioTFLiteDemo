@@ -14,6 +14,7 @@ import android.content.res.AssetFileDescriptor;
 import android.graphics.Bitmap;
 import android.graphics.BitmapFactory;
 import android.os.Bundle;
+import android.os.SystemClock;
 import android.provider.MediaStore;
 import android.text.TextUtils;
 import android.util.Log;
@@ -33,6 +34,8 @@ import java.io.InputStream;
 
 import org.tensorflow.lite.DataType;
 import org.tensorflow.lite.Interpreter;
+import org.tensorflow.lite.support.common.ops.NormalizeOp;
+import org.tensorflow.lite.support.image.ImageProcessor;
 import org.tensorflow.lite.support.image.TensorImage;
 import org.tensorflow.lite.support.tensorbuffer.TensorBuffer;
 
@@ -46,6 +49,7 @@ public class MainActivity extends AppCompatActivity {
     private ImageView imageView;
     private Bitmap targetImage;
     private TextView textView;
+    private TextView textView2;
 
 
 
@@ -56,13 +60,14 @@ public class MainActivity extends AppCompatActivity {
         checkSelfPermission();
 
         textView = (TextView) findViewById(R.id.textView);
+        textView2 = (TextView) findViewById(R.id.textView2);
         imageView = (ImageView) findViewById(R.id.imageView);
         getImageButton = (Button) findViewById(R.id.button2);
         runButton = (Button) findViewById(R.id.button);
 
-        getImageButton.setOnClickListener(new View.OnClickListener(){
+        getImageButton.setOnClickListener(new View.OnClickListener() {
             @Override
-            public void onClick(View v){
+            public void onClick(View v) {
                 Intent intent = new Intent();
                 intent.setType("*/*");
                 intent.setAction(Intent.ACTION_GET_CONTENT);
@@ -70,50 +75,59 @@ public class MainActivity extends AppCompatActivity {
             }
         });
 
-        runButton.setOnClickListener(new View.OnClickListener(){
+        runButton.setOnClickListener(new View.OnClickListener() {
             @Override
-            public void onClick(View v){
-
+            public void onClick(View v) {
+                //to check timecost
+                long startTimeForReference=0;
+                long endTimeForReference=1;
 
                 try {
+                    //Get model
                     Interpreter tfLDemo = getTfliteInterpreter("mobilenet_v1_1.0_224.tflite");
 
-                    DataType ipDtype = tfLDemo.getInputTensor(0).dataType();
-
+                    //place for output
                     float[][] outputArray = new float[1][outputSize];
 
+                    //prepare input
+                    DataType ipDtype = tfLDemo.getInputTensor(0).dataType();
                     TensorImage tensorimg = new TensorImage(ipDtype);
+                    //Initialize preprocessor
+                    ImageProcessor imageProcessor = new ImageProcessor.Builder()
+                            .add(new NormalizeOp(127.5f, 127.5f))
+                            .build();
                     targetImage = Bitmap.createScaledBitmap(targetImage, ipWidth, ipHeight, true);
-
                     tensorimg.load(targetImage);
+                    tensorimg = imageProcessor.process(tensorimg);
 
-
+                    //make inference
+                    startTimeForReference = SystemClock.uptimeMillis();
                     tfLDemo.run(tensorimg.getBuffer(), outputArray);
+                    endTimeForReference = SystemClock.uptimeMillis();
                     tfLDemo.close();
 
-                    int maxIndex = -5;
-                    float max=0;
-                    for(int counter=0; counter<outputArray.length; counter++){
-                        if (Float.compare(max, outputArray[0][counter]) < 0){
+                    //get index & value
+                    int maxIndex = 0;
+                    float max = 0;
+                    for (int counter = 0; counter < outputArray[0].length; counter++) {
+                        if (Float.compare(max, outputArray[0][counter]) < 0) {
                             maxIndex = counter;
                             max = outputArray[0][counter];
                         }
                     }
 
-                    String result = "value: " + Float.toString(max) + ", index: "+Integer.toString(maxIndex);
-
+                    String result = "value: " + Float.toString(max) + ", index: " + Integer.toString(maxIndex);
                     Log.d("alpha", result);
                     textView.setText(result);
 
-                } catch (Exception e){
+                } catch (Exception e) {
                     e.printStackTrace();
                 }
-
-
-
+                String timecost = "Timecost to run model inference: " + (endTimeForReference - startTimeForReference);
+                Log.v("beta", timecost);
+                textView2.setText(timecost);
             }
         });
-
     }
 
 
