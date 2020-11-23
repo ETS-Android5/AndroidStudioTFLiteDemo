@@ -8,6 +8,7 @@ import androidx.core.content.ContextCompat;
 
 import android.Manifest;
 import android.app.Activity;
+import android.content.ClipData;
 import android.content.Intent;
 import android.content.pm.PackageManager;
 import android.content.res.AssetFileDescriptor;
@@ -27,6 +28,7 @@ import android.widget.Toast;
 import java.io.FileInputStream;
 import java.io.IOException;
 import java.lang.reflect.Array;
+import java.nio.ByteBuffer;
 import java.nio.MappedByteBuffer;
 import java.nio.channels.FileChannel;
 import java.util.Arrays;
@@ -50,8 +52,10 @@ public class MainActivity extends AppCompatActivity {
     private Bitmap targetImage;
     private TextView textView;
     private TextView textView2;
+    private TextView textView3;
 
-
+    private Bitmap [] selectedImageList;
+    private boolean multiImage = false;
 
     @Override
     protected void onCreate(Bundle savedInstanceState) {
@@ -61,6 +65,7 @@ public class MainActivity extends AppCompatActivity {
 
         textView = (TextView) findViewById(R.id.textView);
         textView2 = (TextView) findViewById(R.id.textView2);
+        textView3 = (TextView) findViewById(R.id.textView3);
         imageView = (ImageView) findViewById(R.id.imageView);
         getImageButton = (Button) findViewById(R.id.button2);
         runButton = (Button) findViewById(R.id.button);
@@ -70,6 +75,7 @@ public class MainActivity extends AppCompatActivity {
             public void onClick(View v) {
                 Intent intent = new Intent();
                 intent.setType("*/*");
+                intent.putExtra(Intent.EXTRA_ALLOW_MULTIPLE, true);
                 intent.setAction(Intent.ACTION_GET_CONTENT);
                 startActivityForResult(intent, 1);
             }
@@ -79,49 +85,106 @@ public class MainActivity extends AppCompatActivity {
             @Override
             public void onClick(View v) {
                 //to check timecost
-                long startTimeForReference=0;
-                long endTimeForReference=1;
+                long startTimeForReference = 0;
+                long endTimeForReference = 1;
+                if (multiImage) {//batch inference
+                    try {
+                        //Get model
+                        Interpreter tfLDemo = getTfliteInterpreter("mobilenet_v1_1.0_224.tflite");
+                        int[] dimensions = {selectedImageList.length, ipWidth, ipHeight, 3};
+                        tfLDemo.resizeInput(0, dimensions);
+                        tfLDemo.allocateTensors();
 
-                try {
-                    //Get model
-                    Interpreter tfLDemo = getTfliteInterpreter("mobilenet_v1_1.0_224.tflite");
+                        //input bytebuffer
+                        ByteBuffer inputBatch = ByteBuffer.allocate(selectedImageList.length * ipWidth * ipHeight * 3 * 4); //3 is for the channel, 4 is size of float variable
 
-                    //place for output
-                    float[][] outputArray = new float[1][outputSize];
+                        //place for output
+                        float[][] outputArray = new float[selectedImageList.length][outputSize];
 
-                    //prepare input
-                    DataType ipDtype = tfLDemo.getInputTensor(0).dataType();
-                    TensorImage tensorimg = new TensorImage(ipDtype);
-                    //Initialize preprocessor
-                    ImageProcessor imageProcessor = new ImageProcessor.Builder()
-                            .add(new NormalizeOp(127.5f, 127.5f))
-                            .build();
-                    targetImage = Bitmap.createScaledBitmap(targetImage, ipWidth, ipHeight, true);
-                    tensorimg.load(targetImage);
-                    tensorimg = imageProcessor.process(tensorimg);
-
-                    //make inference
-                    startTimeForReference = SystemClock.uptimeMillis();
-                    tfLDemo.run(tensorimg.getBuffer(), outputArray);
-                    endTimeForReference = SystemClock.uptimeMillis();
-                    tfLDemo.close();
-
-                    //get index & value
-                    int maxIndex = 0;
-                    float max = 0;
-                    for (int counter = 0; counter < outputArray[0].length; counter++) {
-                        if (Float.compare(max, outputArray[0][counter]) < 0) {
-                            maxIndex = counter;
-                            max = outputArray[0][counter];
+                        //prepare input
+                        DataType ipDtype = tfLDemo.getInputTensor(0).dataType();
+                        TensorImage tensorimg = new TensorImage(ipDtype);
+                        ImageProcessor imageProcessor = new ImageProcessor.Builder()
+                                .add(new NormalizeOp(127.5f, 127.5f))
+                                .build();
+                        Log.d("batchbuffer capacity: ", Integer.toString(inputBatch.capacity()));
+                        Log.d("start", Integer.toString(inputBatch.position()));
+                        for(int i=0; i<selectedImageList.length; i++){
+                            targetImage = selectedImageList[i];
+                            targetImage = Bitmap.createScaledBitmap(targetImage, ipWidth, ipHeight, true);
+                            tensorimg.load(targetImage);
+                            tensorimg = imageProcessor.process(tensorimg);
+                            //Log.d("batchbuffer capacity: ", Integer.toString(tensorimg.getBuffer().capacity()));
+                            inputBatch.put(tensorimg.getBuffer());
                         }
+                        Log.d("end", Integer.toString(inputBatch.position()));
+
+                        //make inference
+                        startTimeForReference = SystemClock.uptimeMillis();
+                        tfLDemo.run(inputBatch.rewind(), outputArray);
+                        endTimeForReference = SystemClock.uptimeMillis();
+                        tfLDemo.close();
+
+                        //get index & value
+                        int maxIndex = 0;
+                        float max = 0;
+                        for (int counter = 0; counter < outputArray[1].length; counter++) {
+                            if (Float.compare(max, outputArray[1][counter]) < 0) {
+                                maxIndex = counter;
+                                max = outputArray[1][counter];
+                            }
+                        }
+                        String result = "value: " + Float.toString(max) + ", index: " + Integer.toString(maxIndex);
+                        Log.d("alpha", result);
+                        textView.setText(result);
+
+                    } catch(Exception e){
+                        e.printStackTrace();
                     }
+                }
+                else{
+                    try {
+                        //Get model
+                        Interpreter tfLDemo = getTfliteInterpreter("mobilenet_v1_1.0_224.tflite");
 
-                    String result = "value: " + Float.toString(max) + ", index: " + Integer.toString(maxIndex);
-                    Log.d("alpha", result);
-                    textView.setText(result);
+                        //place for output
+                        float[][] outputArray = new float[1][outputSize];
 
-                } catch (Exception e) {
-                    e.printStackTrace();
+                        //prepare input
+                        DataType ipDtype = tfLDemo.getInputTensor(0).dataType();
+                        //Log.d("alpha", ipDtype.toString());
+                        TensorImage tensorimg = new TensorImage(ipDtype);
+                        //Initialize preprocessor
+                        ImageProcessor imageProcessor = new ImageProcessor.Builder()
+                                .add(new NormalizeOp(127.5f, 127.5f))
+                                .build();
+                        targetImage = Bitmap.createScaledBitmap(targetImage, ipWidth, ipHeight, true);
+                        tensorimg.load(targetImage);
+                        tensorimg = imageProcessor.process(tensorimg);
+
+                        //make inference
+                        startTimeForReference = SystemClock.uptimeMillis();
+                        tfLDemo.run(tensorimg.getBuffer(), outputArray);
+                        endTimeForReference = SystemClock.uptimeMillis();
+                        tfLDemo.close();
+
+                        //get index & value
+                        int maxIndex = 0;
+                        float max = 0;
+                        for (int counter = 0; counter < outputArray[0].length; counter++) {
+                            if (Float.compare(max, outputArray[0][counter]) < 0) {
+                                maxIndex = counter;
+                                max = outputArray[0][counter];
+                            }
+                        }
+
+                        String result = "value: " + Float.toString(max) + ", index: " + Integer.toString(maxIndex);
+                        Log.d("alpha", result);
+                        textView.setText(result);
+
+                    } catch (Exception e) {
+                        e.printStackTrace();
+                    }
                 }
                 String timecost = "Timecost to run model inference: " + (endTimeForReference - startTimeForReference);
                 Log.v("beta", timecost);
@@ -137,14 +200,46 @@ public class MainActivity extends AppCompatActivity {
         super.onActivityResult(requestCode, resultCode, data);
 
         if (requestCode == 1 && resultCode == RESULT_OK){
-            try {
-                InputStream is = getContentResolver().openInputStream(data.getData());
-                Bitmap bmSelectedImage = BitmapFactory.decodeStream(is);
-                is.close();
-                imageView.setImageBitmap(bmSelectedImage);
-                targetImage = bmSelectedImage;
-            }catch (Exception e){
-                e.printStackTrace();
+            if(data.getData() != null) { // 하나의 사진 (Just one picture)
+                try {
+                    multiImage = false;
+                    String selNum = "selected Image: 1";
+                    textView3.setText(selNum);
+                    Log.v("alpha", data.getData().toString());
+                    InputStream is = getContentResolver().openInputStream(data.getData());
+                    Bitmap bmSelectedImage = BitmapFactory.decodeStream(is);
+                    is.close();
+                    imageView.setImageBitmap(bmSelectedImage);
+                    targetImage = bmSelectedImage;
+                } catch (Exception e) {
+                    e.printStackTrace();
+                }
+            }
+            else{
+                try{
+                    multiImage = true;
+                    ClipData clipData = data.getClipData();
+                    int selected_photo_num = clipData.getItemCount();
+                    selectedImageList = new Bitmap[selected_photo_num];
+                    String selNum = "selected Image : " + Integer.toString(selected_photo_num);
+                    textView3.setText(selNum);
+                    for(int i=0; i<selectedImageList.length; i++){
+                        InputStream is = getContentResolver().openInputStream(clipData.getItemAt(i).getUri());
+                        Bitmap bmSelectedImage = BitmapFactory.decodeStream(is);
+                        is.close();
+                        selectedImageList[i] = bmSelectedImage;
+                        if(i==0){
+                            imageView.setImageBitmap(bmSelectedImage);
+                            targetImage = bmSelectedImage;
+                        }
+                    }
+                    Log.i("clipdata number", String.valueOf(selectedImageList.length));
+                    Toast.makeText(MainActivity.this, "성공", Toast.LENGTH_LONG).show();
+                } catch (Exception e){
+                    e.printStackTrace();
+                }
+
+
             }
         }
         else if(requestCode == 1 && resultCode == RESULT_CANCELED){

@@ -6,3 +6,6 @@ __2020/10/06__
 
 __2020/11/11__
 + Input image preprocesing implemented, finally making some meaningful results
+
+__2020/11/24__
++ Multiple Image Inference implemented
