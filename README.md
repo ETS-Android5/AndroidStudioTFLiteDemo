@@ -1,4 +1,5 @@
-# TFLite & AndroidStudio
+# TFLite & AndroidStudio  
+Android application for testing H/W acceleration with TFLite delegate apis 
 ## Implemented so far
 __2020/10/06__
 + Get Image from device Storage
