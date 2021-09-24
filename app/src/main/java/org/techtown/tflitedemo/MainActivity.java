@@ -9,12 +9,15 @@ import androidx.core.content.ContextCompat;
 import android.Manifest;
 import android.app.Activity;
 import android.content.ClipData;
+import android.content.Context;
 import android.content.Intent;
 import android.content.pm.PackageManager;
 import android.content.res.AssetFileDescriptor;
 import android.graphics.Bitmap;
 import android.graphics.BitmapFactory;
+import android.graphics.Color;
 import android.os.Bundle;
+import android.os.Environment;
 import android.os.SystemClock;
 import android.provider.MediaStore;
 import android.text.TextUtils;
@@ -25,37 +28,62 @@ import android.widget.ImageView;
 import android.widget.TextView;
 import android.widget.Toast;
 
+import java.io.File;
 import java.io.FileInputStream;
 import java.io.IOException;
 import java.lang.reflect.Array;
+import java.nio.Buffer;
 import java.nio.ByteBuffer;
+import java.nio.ByteOrder;
 import java.nio.MappedByteBuffer;
 import java.nio.channels.FileChannel;
 import java.util.Arrays;
 import java.io.InputStream;
+import java.util.List;
 
 import org.tensorflow.lite.DataType;
 import org.tensorflow.lite.Interpreter;
+import org.tensorflow.lite.nnapi.NnApiDelegate;
+import org.tensorflow.lite.gpu.CompatibilityList;
+import org.tensorflow.lite.gpu.GpuDelegate;
 import org.tensorflow.lite.support.common.ops.NormalizeOp;
 import org.tensorflow.lite.support.image.ImageProcessor;
 import org.tensorflow.lite.support.image.TensorImage;
 import org.tensorflow.lite.support.tensorbuffer.TensorBuffer;
+import org.tensorflow.lite.HexagonDelegate;
+
+import static java.lang.Math.round;
 
 public class MainActivity extends AppCompatActivity {
+    //Context context = getApplicationContext();
+
     private int ipWidth = 224;
     private int ipHeight = 224;
-    private int outputSize = 1001;
+    private int outputSize = 2;
+    private boolean grayscale = true;
+    private boolean quantized = false;
+
+
 
     private Button getImageButton;
     private Button runButton;
+    private Button noDelegateButton;
+    private Button nnApiDelegateButton;
+    private Button gpuDelegateButton;
+    private Button hexagonDelegateButton;
+    private Button accCheckButton;
     private ImageView imageView;
     private Bitmap targetImage;
     private TextView textView;
     private TextView textView2;
     private TextView textView3;
+    private TextView textView4;
 
     private Bitmap [] selectedImageList;
     private boolean multiImage = false;
+
+    private String delegateMode;
+
 
     @Override
     protected void onCreate(Bundle savedInstanceState) {
@@ -66,9 +94,47 @@ public class MainActivity extends AppCompatActivity {
         textView = (TextView) findViewById(R.id.textView);
         textView2 = (TextView) findViewById(R.id.textView2);
         textView3 = (TextView) findViewById(R.id.textView3);
+        textView4 = (TextView) findViewById(R.id.textView4);
         imageView = (ImageView) findViewById(R.id.imageView);
         getImageButton = (Button) findViewById(R.id.button2);
         runButton = (Button) findViewById(R.id.button);
+        accCheckButton = (Button) findViewById(R.id.button7);
+        noDelegateButton = (Button) findViewById(R.id.button5);
+        nnApiDelegateButton = (Button) findViewById(R.id.button3);
+        gpuDelegateButton = (Button) findViewById(R.id.button4);
+        hexagonDelegateButton = (Button) findViewById(R.id.button6);
+
+        noDelegateButton.setOnClickListener(new View.OnClickListener(){
+            @Override
+            public void onClick(View v){
+                delegateMode = "CPU";
+                textView4.setText(delegateMode);
+            }
+        });
+
+        nnApiDelegateButton.setOnClickListener(new View.OnClickListener(){
+            @Override
+            public void onClick(View v){
+                delegateMode = "NNAPI";
+                textView4.setText(delegateMode);
+            }
+        });
+
+        gpuDelegateButton.setOnClickListener(new View.OnClickListener(){
+            @Override
+            public void onClick(View v){
+                delegateMode = "GPU";
+                textView4.setText(delegateMode);
+            }
+        });
+
+        hexagonDelegateButton.setOnClickListener(new View.OnClickListener(){
+            @Override
+            public void onClick(View v){
+                delegateMode = "HEXAGON";
+                textView4.setText(delegateMode);
+            }
+        });
 
         getImageButton.setOnClickListener(new View.OnClickListener() {
             @Override
@@ -81,16 +147,226 @@ public class MainActivity extends AppCompatActivity {
             }
         });
 
+        accCheckButton.setOnClickListener(new View.OnClickListener() {
+            @Override
+            public void onClick(View v) {
+                //to check timecost
+                long startTimeForReference = 0;
+                long endTimeForReference = 1;
+
+                //for delegate Option
+                Interpreter.Options options = (new Interpreter.Options());
+
+                NnApiDelegate nnApiDelegate = null;
+
+                GpuDelegate.Options delegateOptions = null;
+                GpuDelegate gpuDelegate = null;
+                CompatibilityList compatList = new CompatibilityList();
+
+                HexagonDelegate hexagonDelegate = null;
+
+
+                if(delegateMode == "GPU"){
+                    if(compatList.isDelegateSupportedOnThisDevice()){
+                        delegateOptions = compatList.getBestOptionsForThisDevice();
+                        delegateOptions.setPrecisionLossAllowed(false);
+                        delegateOptions.setQuantizedModelsAllowed(true);
+                        gpuDelegate = new GpuDelegate(delegateOptions);
+
+                        options.addDelegate(gpuDelegate);
+                        //options.setAllowFp16PrecisionForFp32(true);
+                        Log.d("delegateMode", "gpudelegate mode");
+                    }
+                    else{
+                        Log.d("delegateMode", "nogpudelegatesupport");
+                    }
+                }
+                else if(delegateMode == "NNAPI"){
+                    NnApiDelegate.Options nnapiDelegateOption = new NnApiDelegate.Options();
+                    //nnapiDelegateOption.setUseNnapiCpu(true);
+                    nnApiDelegate = new NnApiDelegate(nnapiDelegateOption);
+
+                    options.addDelegate(nnApiDelegate);
+                    //options.setAllowFp16PrecisionForFp32(true);
+                    Log.d("delegateMode", "nnapidelegate mode");
+                }
+                else if(delegateMode == "HEXAGON"){
+                    try{
+                        Log.d("debug",MainActivity.this.getApplicationInfo().nativeLibraryDir);
+                        hexagonDelegate = new HexagonDelegate(MainActivity.this);
+                        options.addDelegate(hexagonDelegate);
+                    } catch(UnsupportedOperationException e){
+                        Log.d("hexagon not support", "hexagon not supported on device");
+                    }
+                }
+                else{
+                    Log.d("fp", "16 allow possible");
+                    options.setAllowFp16PrecisionForFp32(false);
+                }
+
+
+
+
+
+                Interpreter tfLDemo = getTfliteInterpreter("Medical_Internal_TFLite_Float16Opt.tflite", options);
+                //저장소 폴더 이름
+                String path_ben = Environment.getExternalStorageDirectory().getAbsolutePath() + "/Download/internal/0_ben";
+                String path_mal = Environment.getExternalStorageDirectory().getAbsolutePath() + "/Download/internal/1_mal";
+                Log.d("path", path_ben);
+
+                //먼저 ben_0에 대하여
+                File ben_directory = new File(path_ben);
+                Log.d("idsdirectory", Boolean.toString(ben_directory.isDirectory()));
+                Log.d("check", ben_directory.getAbsolutePath());
+                File[] ben_files = ben_directory.listFiles();
+
+                //mal_1에 대해
+                File mal_directory = new File(path_mal);
+                Log.d("idsdirectory", Boolean.toString(mal_directory.isDirectory()));
+                Log.d("check", mal_directory.getAbsolutePath());
+                File[] mal_files = mal_directory.listFiles();
+
+
+                int ben_0_true = 0;
+                int mal_1_true = 0;
+
+                for(int i=0; i<ben_files.length; i++){
+                    Bitmap target = BitmapFactory.decodeFile(ben_files[i].getAbsolutePath());
+                    float[][] outputArray = new float[1][outputSize];
+
+                    //prepare input
+                    DataType ipDtype = tfLDemo.getInputTensor(0).dataType();
+                    DataType opDtype = tfLDemo.getOutputTensor(0).dataType();
+                    //Log.d("Input Data Type", ipDtype.toString());
+
+                    target = Bitmap.createScaledBitmap(target, ipWidth, ipHeight, true);
+                    ByteBuffer input;
+                    if(quantized){
+                        input = grayscaleImageToByteBufferQuantized(target);
+                        input.rewind();
+
+                        TensorBuffer probabilityBuffer =
+                                TensorBuffer.createFixedSize(new int[]{1, outputSize}, opDtype);
+                        //ByteBuffer probabilityBuffer = ByteBuffer.allocateDirect(2);
+                        tfLDemo.run(input, probabilityBuffer.getBuffer());
+                        //probabilityBuffer.rewind();
+                        Log.d("result", ben_files[i].getName() + " : " + Arrays.toString(probabilityBuffer.getIntArray()));
+                        if(probabilityBuffer.getIntArray()[0] >= probabilityBuffer.getIntArray()[1]){
+                            ben_0_true += 1;
+                        }
+                    } else {
+                        input = grayscaleImageToByteBuffer(target);
+                        input.rewind();
+                        tfLDemo.run(input, outputArray);
+
+                        Log.d("result", ben_files[i].getName() + " : " + Arrays.toString(outputArray[0]));
+                        if(outputArray[0][0] >= outputArray[0][1]){
+                            ben_0_true += 1;
+                        }
+                    }
+                }
+                Log.d("ben_0_true", Integer.toString(ben_0_true));
+
+
+                for(int i=0; i<mal_files.length; i++){
+                    Bitmap target = BitmapFactory.decodeFile(mal_files[i].getAbsolutePath());
+                    float[][] outputArray = new float[1][outputSize];
+
+                    //prepare input
+                    DataType ipDtype = tfLDemo.getInputTensor(0).dataType();
+                    DataType opDtype = tfLDemo.getOutputTensor(0).dataType();
+                    //Log.d("Input Data Type", ipDtype.toString());
+
+                    target = Bitmap.createScaledBitmap(target, ipWidth, ipHeight, true);
+                    ByteBuffer input;
+                    if(quantized){
+                        input = grayscaleImageToByteBufferQuantized(target);
+                        input.rewind();
+                        TensorBuffer probabilityBuffer =
+                                TensorBuffer.createFixedSize(new int[]{1, outputSize}, opDtype);
+                        tfLDemo.run(input, probabilityBuffer.getBuffer());
+                        Log.d("result", ben_files[i].getName() + " : " + Arrays.toString(probabilityBuffer.getIntArray()));
+                        if(probabilityBuffer.getFloatArray()[0] <= probabilityBuffer.getFloatArray()[1]){
+                            mal_1_true += 1;
+                        }
+                    } else {
+                        input = grayscaleImageToByteBuffer(target);
+                        input.rewind();
+                        tfLDemo.run(input, outputArray);
+                        Log.d("result", mal_files[i].getName() + " : " + Arrays.toString(outputArray[0]));
+                        if(outputArray[0][0] <= outputArray[0][1]){
+                            mal_1_true += 1;
+                        }
+                    }
+                }
+                Log.d("mal_1_true", Integer.toString(mal_1_true));
+
+            }
+        });
+
+
         runButton.setOnClickListener(new View.OnClickListener() {
             @Override
             public void onClick(View v) {
                 //to check timecost
                 long startTimeForReference = 0;
                 long endTimeForReference = 1;
+
+                //for delegate Option
+                Interpreter.Options options = (new Interpreter.Options());
+                //options.setAllowFp16PrecisionForFp32(false);
+
+                NnApiDelegate nnApiDelegate = null;
+
+                GpuDelegate.Options delegateOptions = null;
+                GpuDelegate gpuDelegate = null;
+                CompatibilityList compatList = new CompatibilityList();
+
+                HexagonDelegate hexagonDelegate = null;
+
+
+                if(delegateMode == "GPU"){
+                    if(compatList.isDelegateSupportedOnThisDevice()){
+                        delegateOptions = compatList.getBestOptionsForThisDevice();
+                        delegateOptions.setPrecisionLossAllowed(false); //important
+                        delegateOptions.setQuantizedModelsAllowed(false);
+                        gpuDelegate = new GpuDelegate(delegateOptions);
+
+                        options.addDelegate(gpuDelegate);
+                        //options.setAllowFp16PrecisionForFp32(true);
+                        Log.d("delegateMode", "gpudelegate mode");
+                    }
+                    else{
+                        Log.d("delegateMode", "nogpudelegatesupport");
+                    }
+                }
+                else if(delegateMode == "NNAPI"){
+                    NnApiDelegate.Options nnapiDelegateOption = new NnApiDelegate.Options();
+                    //nnapiDelegateOption.setUseNnapiCpu(true);
+                    nnApiDelegate = new NnApiDelegate(nnapiDelegateOption);
+
+                    options.addDelegate(nnApiDelegate);
+                    //options.setAllowFp16PrecisionForFp32(true);
+                    Log.d("delegateMode", "nnapidelegate mode");
+                }
+                else if(delegateMode == "HEXAGON"){
+                    try{
+                        Log.d("debug",MainActivity.this.getApplicationInfo().nativeLibraryDir);
+                        hexagonDelegate = new HexagonDelegate(MainActivity.this);
+                        options.addDelegate(hexagonDelegate);
+                    } catch(UnsupportedOperationException e){
+                        Log.d("hexagon not support", "hexagon not supported on device");
+                    }
+                }
+                else{
+                    Log.d("fp", "16 allow possible");
+                    options.setAllowFp16PrecisionForFp32(false);
+                }
+
+
                 if (multiImage) {//batch inference
                     try {
-                        //Get model
-                        Interpreter tfLDemo = getTfliteInterpreter("mobilenet_v1_1.0_224.tflite");
+                        Interpreter tfLDemo = getTfliteInterpreter("AlexNet_QAT_INT_uint8io.tflite", options);
                         int[] dimensions = {selectedImageList.length, ipWidth, ipHeight, 3};
                         tfLDemo.resizeInput(0, dimensions);
                         tfLDemo.allocateTensors();
@@ -120,21 +396,31 @@ public class MainActivity extends AppCompatActivity {
                         Log.d("end", Integer.toString(inputBatch.position()));
 
                         //make inference
+                        tfLDemo.run(inputBatch.rewind(), outputArray);
                         startTimeForReference = SystemClock.uptimeMillis();
                         tfLDemo.run(inputBatch.rewind(), outputArray);
                         endTimeForReference = SystemClock.uptimeMillis();
                         tfLDemo.close();
+                        if(null != nnApiDelegate){
+                            nnApiDelegate.close();
+                        }
+                        if(null != gpuDelegate){
+                            gpuDelegate.close();
+                        }
+                        if(null != hexagonDelegate){
+                            hexagonDelegate.close();
+                        }
 
                         //get index & value
                         int maxIndex = 0;
-                        float max = 0;
+                        double max = 0;
                         for (int counter = 0; counter < outputArray[1].length; counter++) {
-                            if (Float.compare(max, outputArray[1][counter]) < 0) {
+                            if (Double.compare(max, outputArray[1][counter]) < 0) {
                                 maxIndex = counter;
                                 max = outputArray[1][counter];
                             }
                         }
-                        String result = "value: " + Float.toString(max) + ", index: " + Integer.toString(maxIndex);
+                        String result = "value: " + Double.toString(max) + ", index: " + Integer.toString(maxIndex);
                         Log.d("alpha", result);
                         textView.setText(result);
 
@@ -144,8 +430,11 @@ public class MainActivity extends AppCompatActivity {
                 }
                 else{
                     try {
+                        /*
                         //Get model
-                        Interpreter tfLDemo = getTfliteInterpreter("mobilenet_v1_1.0_224.tflite");
+
+                        options.setAllowFp16PrecisionForFp32(false);
+                        Interpreter tfLDemo = getTfliteInterpreter("VGG16_TFLite_Float16Opt.tflite", options);
 
                         //place for output
                         float[][] outputArray = new float[1][outputSize];
@@ -156,17 +445,113 @@ public class MainActivity extends AppCompatActivity {
                         TensorImage tensorimg = new TensorImage(ipDtype);
                         //Initialize preprocessor
                         ImageProcessor imageProcessor = new ImageProcessor.Builder()
-                                .add(new NormalizeOp(127.5f, 127.5f))
+                                .add(new NormalizeOp(127.5f, 127.5f))// 0.0f, 1.0f for quantized model>
                                 .build();
                         targetImage = Bitmap.createScaledBitmap(targetImage, ipWidth, ipHeight, true);
                         tensorimg.load(targetImage);
                         tensorimg = imageProcessor.process(tensorimg);
+                        /*===============================================================*/
+                        //Get model
+                        Interpreter tfLDemo = getTfliteInterpreter("Medical_Internal_TFLite_Original.tflite", options);
 
-                        //make inference
+                        //place for output
+                        float[][] outputArray = new float[1][outputSize];
+
+                        //prepare input
+                        DataType ipDtype = tfLDemo.getInputTensor(0).dataType();
+                        DataType opDtype = tfLDemo.getOutputTensor(0).dataType();
+                        Log.d("alpha", ipDtype.toString());
+                        TensorImage tensorimg = new TensorImage(ipDtype);//DataType.UINT8
+                        //Initialize preprocessor
+                        if(grayscale) {
+                            targetImage = Bitmap.createScaledBitmap(targetImage, ipWidth, ipHeight, true);
+                            ByteBuffer input;
+                            if(quantized){
+                                input = grayscaleImageToByteBufferQuantized(targetImage);
+                            } else {
+                                input = grayscaleImageToByteBuffer(targetImage);
+                            }
+                            TensorBuffer probabilityBuffer =
+                                    TensorBuffer.createFixedSize(new int[]{1, outputSize}, opDtype);
+
+                            long[] times = new long[100];
+                            input.rewind();
+                            tfLDemo.run(input, probabilityBuffer.getBuffer());
+
+                            for (int i = 0; i < 100; i++) {
+                                TensorBuffer probabilityBuffer2 =
+                                        TensorBuffer.createFixedSize(new int[]{1, outputSize}, opDtype);
+                                input.rewind();
+                                ByteBuffer p = probabilityBuffer2.getBuffer();
+                                startTimeForReference = SystemClock.uptimeMillis();
+                                tfLDemo.run(input, p);
+                                endTimeForReference = SystemClock.uptimeMillis();
+
+                                times[i] = endTimeForReference - startTimeForReference;
+                            }
+
+                            Log.d("result", Arrays.toString(probabilityBuffer.getFloatArray()));
+                            Log.d("times", Arrays.toString(times));
+                            tfLDemo.close();
+                        } else{
+                            ImageProcessor imageProcessor = new ImageProcessor.Builder()
+                                    .add(new NormalizeOp(0.0f, 1.0f))
+                                    .build();
+                            targetImage = Bitmap.createScaledBitmap(targetImage, ipWidth, ipHeight, true);
+                            tensorimg.load(targetImage);
+                            tensorimg = imageProcessor.process(tensorimg);
+                            TensorBuffer probabilityBuffer =
+                                    TensorBuffer.createFixedSize(new int[]{1, outputSize}, opDtype);
+                            //make inference, get times
+                            long[] times = new long[100];
+                            ByteBuffer b = tensorimg.getBuffer();
+                            b.rewind();
+                            tfLDemo.run(b, probabilityBuffer.getBuffer());
+
+                            for (int i = 0; i < 100; i++) {
+                                TensorBuffer probabilityBuffer2 =
+                                        TensorBuffer.createFixedSize(new int[]{1, outputSize}, opDtype);
+                                b.rewind();
+                                ByteBuffer p = probabilityBuffer2.getBuffer();
+                                startTimeForReference = SystemClock.uptimeMillis();
+                                tfLDemo.run(b, p);
+                                endTimeForReference = SystemClock.uptimeMillis();
+
+                                times[i] = endTimeForReference - startTimeForReference;
+                            }
+                            Log.d("times", Arrays.toString(times));
+                            tfLDemo.close();
+                        }
+                         /*=================================================*/
+                        //make inference, get times
+                        /*
+                        long[] times = new long[100];
+                        tfLDemo.run(tensorimg.getBuffer(), outputArray);
+                        /*
+                        for(int i=0; i<100; i++) {
+                            startTimeForReference = SystemClock.uptimeMillis();
+                            tfLDemo.run(tensorimg.getBuffer(), outputArray);
+                            endTimeForReference = SystemClock.uptimeMillis();
+
+                            times[i] = endTimeForReference-startTimeForReference;
+                        }
+                         */
+                        /*
                         startTimeForReference = SystemClock.uptimeMillis();
                         tfLDemo.run(tensorimg.getBuffer(), outputArray);
                         endTimeForReference = SystemClock.uptimeMillis();
+                        Log.d("times", Arrays.toString(times));
                         tfLDemo.close();
+                        */
+                        if(null != nnApiDelegate){
+                            nnApiDelegate.close();
+                        }
+                        if(null != gpuDelegate){
+                            gpuDelegate.close();
+                        }
+                        if(null != hexagonDelegate){
+                            hexagonDelegate.close();
+                        }
 
                         //get index & value
                         int maxIndex = 0;
@@ -238,8 +623,6 @@ public class MainActivity extends AppCompatActivity {
                 } catch (Exception e){
                     e.printStackTrace();
                 }
-
-
             }
         }
         else if(requestCode == 1 && resultCode == RESULT_CANCELED){
@@ -278,9 +661,9 @@ public class MainActivity extends AppCompatActivity {
     }
 
     // 모델 불러오기 (get TFlite Model)
-    private Interpreter getTfliteInterpreter(String modelPath){
+    private Interpreter getTfliteInterpreter(String modelPath, Interpreter.Options options){
         try{
-            return new Interpreter(loadModelFile(MainActivity.this, modelPath));
+            return new Interpreter(loadModelFile(MainActivity.this, modelPath), options);
         }
         catch(Exception e){
             e.printStackTrace();
@@ -297,5 +680,30 @@ public class MainActivity extends AppCompatActivity {
         return fileChannel.map(FileChannel.MapMode.READ_ONLY, startOffset, declaredLength);
     }
 
+    private ByteBuffer grayscaleImageToByteBuffer(Bitmap bitmap){
+        ByteBuffer mImgData = ByteBuffer.allocateDirect(4*ipWidth*ipHeight);
+        mImgData.order(ByteOrder.nativeOrder());
+        mImgData.rewind();
+        int [] pixels = new int[ipWidth*ipHeight];
+        bitmap.getPixels(pixels, 0, ipWidth, 0, 0, ipWidth, ipHeight);
+        for (int pixel : pixels){
+            mImgData.putFloat((float) ((0.299*Color.red(pixel) + 0.587*Color.green(pixel) + 0.114*Color.blue(pixel))/255.0));
+        }
+        mImgData.rewind();
+        return mImgData;
+    }
 
+
+    private ByteBuffer grayscaleImageToByteBufferQuantized(Bitmap bitmap){
+        ByteBuffer mImgData = ByteBuffer.allocateDirect(ipWidth*ipHeight);
+        mImgData.order(ByteOrder.nativeOrder());
+        mImgData.rewind();
+        int [] pixels = new int[ipWidth*ipHeight];
+        bitmap.getPixels(pixels, 0, ipWidth, 0, 0, ipWidth, ipHeight);
+        for (int pixel : pixels){
+            mImgData.put((byte)(int)round((float)(0.299*Color.red(pixel) + 0.587*Color.green(pixel) + 0.114*Color.blue(pixel))));
+        }
+        mImgData.rewind();
+        return mImgData;
+    }
 }
