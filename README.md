@@ -10,7 +10,8 @@ __2020/11/11__
 
 __2020/11/24__
 + Multiple Image Inference implemented  
-  
+    
+__Latest ver.__  
 + GPU/Hexagon Delegate implemented  
 + Implemented checking latency cost for inference   
 + Medical Model accuracy checking implemented  
