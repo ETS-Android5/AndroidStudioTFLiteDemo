@@ -57,10 +57,10 @@ import static java.lang.Math.round;
 public class MainActivity extends AppCompatActivity {
     //Context context = getApplicationContext();
 
-    private int ipWidth = 224;
-    private int ipHeight = 224;
-    private int outputSize = 2;
-    private boolean grayscale = true;
+    private int ipWidth = 32;
+    private int ipHeight = 32;
+    private int outputSize = 10;
+    private boolean grayscale =false;
     private boolean quantized = false;
 
 
@@ -452,7 +452,7 @@ public class MainActivity extends AppCompatActivity {
                         tensorimg = imageProcessor.process(tensorimg);
                         /*===============================================================*/
                         //Get model
-                        Interpreter tfLDemo = getTfliteInterpreter("Medical_Internal_TFLite_Original.tflite", options);
+                        Interpreter tfLDemo = getTfliteInterpreter("VGG16_TFLite_DynRangeOpt.tflite", options);
 
                         //place for output
                         float[][] outputArray = new float[1][outputSize];
